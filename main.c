@@ -24,6 +24,7 @@ GNU General Public License for more details.
 #define MAXIFS    256
 #define MAXMULTICAST 256
 #define MAXTARGETS 256
+#define MAXPORTS  256
 #define DPRINT  if (debug) printf
 #define IPHEADER_LEN 20
 #define UDPHEADER_LEN 8
@@ -47,6 +48,7 @@ GNU General Public License for more details.
 #include <linux/if.h>
 #endif
 #include <sys/ioctl.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -179,7 +181,7 @@ size_t resolve_to_addresses(const struct in_addr rcv_inaddr,
 }
 
 static void print_usage(const char *progname, FILE *stream) {
-    fprintf(stream,"usage: %s [-d] [-f] [-h] [-s IP] [-t [iface:]IP]... [--id id] [-p udp-port] [--dev dev1]... [--multicast ip]...\n\n",progname);
+    fprintf(stream,"usage: %s [-d] [-f] [-h] [-s IP] [-t [iface:]IP]... [--id id] [-p udp-port] [--ports list] [--dev dev1]... [--multicast ip]...\n\n",progname);
     fprintf(stream,"This program listens for broadcast  packets  on the  specified UDP port\n"
         "and then forwards them to each other given interface.  Packets are sent\n"
         "such that they appear to have come from the original broadcaster, resp.\n"
@@ -209,6 +211,9 @@ static void print_usage(const char *progname, FILE *stream) {
         "            unique instance ID (1-99) used for loop/echo detection.\n"
         "    -p, --port udp-port\n"
         "            UDP port to listen on and relay between the --dev interfaces.\n"
+        "    --ports list\n"
+        "            comma-separated UDP ports and inclusive ranges to relay\n"
+        "            (e.g. --ports 6112,16654,16660-16670); can be repeated.\n"
         "    --dev dev\n"
         "            interface to relay broadcasts on; can be repeated.\n"
         "    --multicast ip\n"
@@ -217,10 +222,70 @@ static void print_usage(const char *progname, FILE *stream) {
     );
 }
 
+static int add_port_spec(const char *arg, u_int16_t *ports, int *portsNum, int maxPorts) {
+    char *endptr;
+    errno = 0;
+    unsigned long start = strtoul(arg, &endptr, 10);
+    if (endptr == arg || errno != 0) {
+        return -1;
+    }
+    unsigned long end = start;
+    if (*endptr == '-') {
+        const char *rangeEnd = endptr + 1;
+        errno = 0;
+        end = strtoul(rangeEnd, &endptr, 10);
+        if (endptr == rangeEnd || errno != 0) {
+            return -1;
+        }
+    }
+    if (*endptr != '\0' || start < 1 || end > 65535 || start > end) {
+        return -1;
+    }
+    if (*portsNum + (int)(end - start + 1) > maxPorts) {
+        return -2;
+    }
+    for (unsigned long p = start; p <= end; p++) {
+        for (int i = 0; i < *portsNum; i++) {
+            if (ports[i] == p) {
+                return -3;
+            }
+        }
+        ports[(*portsNum)++] = (u_int16_t)p;
+    }
+    return 0;
+}
+
+static int add_ports_list(const char *arg, u_int16_t *ports, int *portsNum, int maxPorts) {
+    char *copy = strdup(arg);
+    char *saveptr = NULL;
+    char *token;
+    int result = 0;
+
+    if (copy == NULL) {
+        perror("strdup");
+        return -1;
+    }
+    token = strtok_r(copy, ",", &saveptr);
+    if (token == NULL) {
+        free(copy);
+        return -1;
+    }
+    while (token != NULL) {
+        result = add_port_spec(token, ports, portsNum, maxPorts);
+        if (result != 0) {
+            break;
+        }
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+    free(copy);
+    return result;
+}
+
 int main(int argc,char **argv) {
     /* Debugging, forking, other settings */
     int debug = 0, forking = 0;
-    u_int16_t port = 0;
+    u_int16_t ports[MAXPORTS];
+    int portsNum = 0;
     u_char id = 0;
     char* multicastAddrs[MAXMULTICAST];
     int multicastAddrsNum = 0;
@@ -299,18 +364,46 @@ int main(int argc,char **argv) {
             DPRINT ("ID set to %i\n", id);
         }
         else if (strcmp(argv[i],"-p") == 0 || strcmp(argv[i],"--port") == 0) {
-            char *end = NULL;
-            long parsed;
-            i++;
-            errno = 0;
-            parsed = strtol(argv[i], &end, 10);
-            if (errno != 0 || end == argv[i] || *end != '\0' ||
-                parsed < 1 || parsed > 65535) {
-                fprintf(stderr, "invalid port: %s\n", argv[i]);
+            if (i + 1 >= argc) {
+                fprintf (stderr,"missing value for --port\n");
                 exit(1);
             }
-            port = (u_int16_t)parsed;
-            DPRINT ("Port set to %i\n", port);
+            i++;
+            const int portResult = add_port_spec(argv[i], ports, &portsNum, MAXPORTS);
+            if (portResult == -2) {
+                fprintf (stderr,"too many ports (max %i)\n", MAXPORTS);
+                exit(1);
+            }
+            if (portResult == -3) {
+                fprintf (stderr,"duplicate port: %s\n", argv[i]);
+                exit(1);
+            }
+            if (portResult != 0) {
+                fprintf (stderr,"invalid port: %s\n", argv[i]);
+                exit(1);
+            }
+            DPRINT ("Port(s) set to %s\n", argv[i]);
+        }
+        else if (strcmp(argv[i],"--ports") == 0) {
+            if (i + 1 >= argc) {
+                fprintf (stderr,"missing value for --ports\n");
+                exit(1);
+            }
+            i++;
+            const int portsResult = add_ports_list(argv[i], ports, &portsNum, MAXPORTS);
+            if (portsResult == -2) {
+                fprintf (stderr,"too many ports (max %i)\n", MAXPORTS);
+                exit(1);
+            }
+            if (portsResult == -3) {
+                fprintf (stderr,"duplicate port in --ports: %s\n", argv[i]);
+                exit(1);
+            }
+            if (portsResult != 0) {
+                fprintf (stderr,"invalid --ports list: %s\n", argv[i]);
+                exit(1);
+            }
+            DPRINT ("Ports set to %s\n", argv[i]);
         }
         else if (strcmp(argv[i],"--dev") == 0) {
             i++;
@@ -336,14 +429,18 @@ int main(int argc,char **argv) {
         fprintf (stderr,"ID argument %i not between 1 and 99\n",id);
         exit(1);
     }
-    if (port < 1) {
+    if (portsNum < 1) {
         fprintf (stderr,"Port argument not valid\n");
         exit(1);
     }
 
     u_char ttl = id+TTL_ID_OFFSET;
 
-    DPRINT ("ID: %i (ttl: %i), Port %i\n",id,ttl,port);
+    DPRINT ("ID: %i (ttl: %i), Ports:",id,ttl);
+    for (int p = 0; p < portsNum; p++) {
+        DPRINT (" %u",(unsigned)ports[p]);
+    }
+    DPRINT ("\n");
 
     /* We need to find out what IP's are bound to this host - set up a temporary socket to do so */
     int fd;
@@ -508,42 +605,42 @@ int main(int argc,char **argv) {
     /* Free our allocated buffer and close the socket */
     close(fd);
 
-    /* Create our broadcast receiving socket */
-    int rcv;
-    {
-        if((rcv=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP)) < 0)
+    /* Create our broadcast receiving sockets, one per port */
+    int rcv[MAXPORTS];
+    for (int p = 0; p < portsNum; p++) {
+        if((rcv[p]=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP)) < 0)
           {
               perror("socket");
               exit(1);
           }
         int yes = 1;
-        if(setsockopt(rcv, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes))<0){
+        if(setsockopt(rcv[p], SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes))<0){
             perror("SO_BROADCAST on rcv");
             exit(1);
         };
-        if (setsockopt(rcv, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes))<0) {
+        if (setsockopt(rcv[p], SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes))<0) {
             perror("SO_REUSEPORT on rcv");
             exit(1);
         }
         #ifdef __FreeBSD__
-            if(setsockopt(rcv, IPPROTO_IP, IP_RECVTTL, &yes, sizeof(yes))<0){
+            if(setsockopt(rcv[p], IPPROTO_IP, IP_RECVTTL, &yes, sizeof(yes))<0){
                 perror("IP_RECVTTL on rcv");
                 exit(1);
             };
-            if(setsockopt(rcv, IPPROTO_IP, IP_RECVIF, &yes, sizeof(yes))<0){
+            if(setsockopt(rcv[p], IPPROTO_IP, IP_RECVIF, &yes, sizeof(yes))<0){
                 perror("IP_RECVIF on rcv");
                 exit(1);
             };
-            if(setsockopt(rcv, IPPROTO_IP, IP_RECVDSTADDR, &yes, sizeof(yes))<0){
+            if(setsockopt(rcv[p], IPPROTO_IP, IP_RECVDSTADDR, &yes, sizeof(yes))<0){
                 perror("IP_RECVDSTADDR on rcv");
                 exit(1);
             };
         #else
-            if(setsockopt(rcv, SOL_IP, IP_RECVTTL, &yes, sizeof(yes))<0){
+            if(setsockopt(rcv[p], SOL_IP, IP_RECVTTL, &yes, sizeof(yes))<0){
                 perror("IP_RECVTTL on rcv");
                 exit(1);
             };
-            if(setsockopt(rcv, SOL_IP, IP_PKTINFO, &yes, sizeof(yes))<0){
+            if(setsockopt(rcv[p], SOL_IP, IP_PKTINFO, &yes, sizeof(yes))<0){
                 perror("IP_PKTINFO on rcv");
                 exit(1);
             };
@@ -555,7 +652,7 @@ int main(int argc,char **argv) {
                 mreq.imr_interface.s_addr = ifs[x].ifaddr.s_addr;
                 mreq.imr_multiaddr.s_addr = inet_addr(multicastAddrs[i]);
                 DPRINT("IP_ADD_MEMBERSHIP:\t\t%s %s\n",inet_ntoa(ifs[x].ifaddr),multicastAddrs[i]);
-                if(setsockopt(rcv, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq))<0){
+                if(setsockopt(rcv[p], IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq))<0){
                     perror("IP_ADD_MEMBERSHIP on rcv");
                     exit(1);
                 }
@@ -564,9 +661,9 @@ int main(int argc,char **argv) {
 
         struct sockaddr_in bind_addr;
         bind_addr.sin_family = AF_INET;
-        bind_addr.sin_port = htons(port);
+        bind_addr.sin_port = htons(ports[p]);
         bind_addr.sin_addr.s_addr = INADDR_ANY;
-        if(bind(rcv, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
+        if(bind(rcv[p], (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
             perror("bind");
             fprintf(stderr,"rcv bind\n");
             exit(1);
@@ -574,6 +671,13 @@ int main(int argc,char **argv) {
     }
 
     DPRINT("Done Initializing\n\n");
+
+    struct pollfd pollfds[MAXPORTS];
+    for (int p = 0; p < portsNum; p++) {
+        pollfds[p].fd = rcv[p];
+        pollfds[p].events = POLLIN;
+        pollfds[p].revents = 0;
+    }
 
     /* Fork to background */
     if (! debug) {
@@ -586,9 +690,19 @@ int main(int argc,char **argv) {
 
     for (;;) /* endless loop */
     {
-        /* Receive a broadcast packet */
-        int len = recvmsg(rcv,&rcv_msg,0);
-        if (len <= 0) continue;    /* ignore broken packets */
+        int poll_ret = poll(pollfds, portsNum, -1);
+        if (poll_ret < 0) {
+            if (errno == EINTR) continue;
+            perror("poll");
+            exit(1);
+        }
+        for (int p = 0; p < portsNum; p++) {
+            if (!(pollfds[p].revents & POLLIN)) continue;
+            rcv_msg.msg_namelen = sizeof(rcv_addr);
+            rcv_msg.msg_controllen = sizeof(pkt_infos);
+            /* Receive a broadcast packet */
+            int len = recvmsg(rcv[p],&rcv_msg,0);
+            if (len <= 0) continue;    /* ignore broken packets */
 
         /* Find the ttl and the receiving interface */
         struct cmsghdr *cmsg;
@@ -648,7 +762,7 @@ int main(int argc,char **argv) {
         struct in_addr origFromAddress = rcv_addr.sin_addr;
         u_short origFromPort = ntohs(rcv_addr.sin_port);
         struct in_addr origToAddress = rcv_inaddr;
-        u_short origToPort = port;
+        u_short origToPort = ports[p];
 
         gram[HEADER_LEN + len] = 0;
 
@@ -684,7 +798,7 @@ int main(int argc,char **argv) {
             u_short fromPort;
             if (spoof_addr == inet_addr("1.1.1.1")) {
                 fromAddress = iface->ifaddr;
-                fromPort = port;
+                fromPort = origToPort;
             } else if (spoof_addr == inet_addr("1.1.1.2")) {
                 fromAddress = iface->ifaddr;
                 fromPort = origFromPort;
@@ -747,5 +861,6 @@ int main(int argc,char **argv) {
             }
         }
         DPRINT ("\n");
+        }
     }
 }
