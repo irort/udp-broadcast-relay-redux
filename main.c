@@ -180,7 +180,7 @@ size_t resolve_to_addresses(const struct in_addr rcv_inaddr,
 }
 
 static void print_usage(const char *progname, FILE *stream) {
-    fprintf(stream,"usage: %s [-d] [-f] [-h] [-s IP] [-t [iface:]IP]... [--id id] [--port udp-port] [--dev dev1]... [--multicast ip]...\n\n",progname);
+    fprintf(stream,"usage: %s [-d] [-f] [-h] [-s IP] [-t [iface:]IP]... [--id id] [-p udp-port] [--dev dev1]... [--multicast ip]...\n\n",progname);
     fprintf(stream,"This program listens for broadcast  packets  on the  specified UDP port\n"
         "and then forwards them to each other given interface.  Packets are sent\n"
         "such that they appear to have come from the original broadcaster, resp.\n"
@@ -208,7 +208,7 @@ static void print_usage(const char *progname, FILE *stream) {
         "            qualified entry of its own.\n"
         "    --id id\n"
         "            unique instance ID (1-99) used for loop/echo detection.\n"
-        "    --port udp-port\n"
+        "    -p, --port udp-port\n"
         "            UDP port to listen on and relay between the --dev interfaces.\n"
         "    --dev dev\n"
         "            interface to relay broadcasts on; can be repeated.\n"
@@ -299,7 +299,7 @@ int main(int argc,char **argv) {
             id = atoi(argv[i]);
             DPRINT ("ID set to %i\n", id);
         }
-        else if (strcmp(argv[i],"--port") == 0) {
+        else if (strcmp(argv[i],"-p") == 0 || strcmp(argv[i],"--port") == 0) {
             i++;
             port = atoi(argv[i]);
             DPRINT ("Port set to %i\n", port);
