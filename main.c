@@ -82,9 +82,8 @@ static u_char gram[4096]=
     '1','2','3','4','5','6','7','8','9','0'
 };
 
-void inet_ntoa2(struct in_addr in, char* chr, int len) {
-    char* from = inet_ntoa(in);
-    strncpy(chr, from, len);
+void inet_ntoa2(struct in_addr in, char* chr, size_t len) {
+    snprintf(chr, len, "%s", inet_ntoa(in));
 }
 
 /* Parses the -t cli argument */
@@ -300,8 +299,17 @@ int main(int argc,char **argv) {
             DPRINT ("ID set to %i\n", id);
         }
         else if (strcmp(argv[i],"-p") == 0 || strcmp(argv[i],"--port") == 0) {
+            char *end = NULL;
+            long parsed;
             i++;
-            port = atoi(argv[i]);
+            errno = 0;
+            parsed = strtol(argv[i], &end, 10);
+            if (errno != 0 || end == argv[i] || *end != '\0' ||
+                parsed < 1 || parsed > 65535) {
+                fprintf(stderr, "invalid port: %s\n", argv[i]);
+                exit(1);
+            }
+            port = (u_int16_t)parsed;
             DPRINT ("Port set to %i\n", port);
         }
         else if (strcmp(argv[i],"--dev") == 0) {
@@ -328,7 +336,7 @@ int main(int argc,char **argv) {
         fprintf (stderr,"ID argument %i not between 1 and 99\n",id);
         exit(1);
     }
-    if (port < 1 || port > 65535) {
+    if (port < 1) {
         fprintf (stderr,"Port argument not valid\n");
         exit(1);
     }
@@ -457,7 +465,6 @@ int main(int argc,char **argv) {
         }
         {
             int yes = 1;
-            int no = 0;
             if (setsockopt(iface->raw_socket, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes))<0) {
                 perror("setsockopt SO_BROADCAST");
                 exit(1);
@@ -471,6 +478,7 @@ int main(int argc,char **argv) {
                 exit(1);
             }
             #ifdef __FreeBSD__
+                int no = 0;
                 if((setsockopt(iface->raw_socket, IPPROTO_IP, IP_MULTICAST_LOOP, &no, sizeof(no))) < 0) {
                     perror("setsockopt IP_MULTICAST_LOOP");
                 }
