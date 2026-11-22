@@ -179,6 +179,45 @@ size_t resolve_to_addresses(const struct in_addr rcv_inaddr,
     return to_addresses_counter;
 }
 
+static void print_usage(const char *progname, FILE *stream) {
+    fprintf(stream,"usage: %s [-d] [-f] [-h] [-s IP] [-t [iface:]IP]... [--id id] [--port udp-port] [--dev dev1]... [--multicast ip]...\n\n",progname);
+    fprintf(stream,"This program listens for broadcast  packets  on the  specified UDP port\n"
+        "and then forwards them to each other given interface.  Packets are sent\n"
+        "such that they appear to have come from the original broadcaster, resp.\n"
+        "from the spoofing IP in case -s is used.  When using multiple instances\n"
+        "for the same port on the same network, they must have a different id.\n\n"
+        "    -d      enables debugging\n"
+        "    -f      forces forking to background\n"
+        "    -h, --help\n"
+        "            show this help and exit\n"
+        "    -s IP   sets the source IP of forwarded packets; otherwise the\n"
+        "            original sender's address is used.\n"
+        "            Setting to 1.1.1.1 uses outgoing interface address and broadcast port.\n"
+        "            (helps in some rare cases)\n"
+        "            Setting to 1.1.1.2 uses outgoing interface address and source port.\n"
+        "            (helps in some rare cases)\n"
+        "    -t      sets the destination IP of forwarded packets; otherwise the\n"
+        "            original target is used.\n"
+        "            Setting to 255.255.255.255 uses the broadcast address of the\n"
+        "            outgoing interface.\n"
+        "            Can be repeated. Qualify with iface:IP (e.g. -t tun0:10.0.0.2)\n"
+        "            to apply only to packets sent out that --dev interface; a\n"
+        "            qualified -t fully replaces the default/-t fallback for that\n"
+        "            interface, and multiple -t for the same interface each send a\n"
+        "            copy. An unqualified -t IP applies to any interface with no\n"
+        "            qualified entry of its own.\n"
+        "    --id id\n"
+        "            unique instance ID (1-99) used for loop/echo detection.\n"
+        "    --port udp-port\n"
+        "            UDP port to listen on and relay between the --dev interfaces.\n"
+        "    --dev dev\n"
+        "            interface to relay broadcasts on; can be repeated.\n"
+        "    --multicast ip\n"
+        "            multicast group address to join and relay; can be repeated.\n"
+        "\n"
+    );
+}
+
 int main(int argc,char **argv) {
     /* Debugging, forking, other settings */
     int debug = 0, forking = 0;
@@ -205,35 +244,16 @@ int main(int argc,char **argv) {
     rcv_msg.msg_controllen = sizeof(pkt_infos);
 
     if(argc < 2) {
-        fprintf(stderr,"usage: %s [-d] [-f] [-s IP] [-t [iface:]IP]... [--id id] [--port udp-port] [--dev dev1]... [--multicast ip]...\n\n",*argv);
-        fprintf(stderr,"This program listens for broadcast  packets  on the  specified UDP port\n"
-            "and then forwards them to each other given interface.  Packets are sent\n"
-            "such that they appear to have come from the original broadcaster, resp.\n"
-            "from the spoofing IP in case -s is used.  When using multiple instances\n"
-            "for the same port on the same network, they must have a different id.\n\n"
-            "    -d      enables debugging\n"
-            "    -f      forces forking to background\n"
-            "    -s IP   sets the source IP of forwarded packets; otherwise the\n"
-            "            original sender's address is used.\n"
-            "            Setting to 1.1.1.1 uses outgoing interface address and broadcast port.\n"
-            "            (helps in some rare cases)\n"
-            "            Setting to 1.1.1.2 uses outgoing interface address and source port.\n"
-            "            (helps in some rare cases)\n"
-            "    -t      sets the destination IP of forwarded packets; otherwise the\n"
-            "            original target is used.\n"
-            "            Setting to 255.255.255.255 uses the broadcast address of the\n"
-            "            outgoing interface.\n"
-            "            Can be repeated. Qualify with iface:IP (e.g. -t tun0:10.0.0.2)\n"
-            "            to apply only to packets sent out that --dev interface; a\n"
-            "            qualified -t fully replaces the default/-t fallback for that\n"
-            "            interface, and multiple -t for the same interface each send a\n"
-            "            copy. An unqualified -t IP applies to any interface with no\n"
-            "            qualified entry of its own.\n"
-            "\n"
-        );
+        print_usage(argv[0], stderr);
         exit(1);
     }
 
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i],"-h") == 0 || strcmp(argv[i],"--help") == 0) {
+            print_usage(argv[0], stdout);
+            return 0;
+        }
+    }
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i],"-d") == 0) {
             DPRINT ("Debugging Mode enabled\n");
