@@ -359,8 +359,21 @@ int main(int argc,char **argv) {
             }
         }
         else if (strcmp(argv[i],"--id") == 0) {
+            char *end = NULL;
+            long parsed;
+            if (i + 1 >= argc) {
+                fprintf (stderr,"missing value for --id\n");
+                exit(1);
+            }
             i++;
-            id = atoi(argv[i]);
+            errno = 0;
+            parsed = strtol(argv[i], &end, 10);
+            if (errno != 0 || end == argv[i] || *end != '\0' ||
+                parsed < 1 || parsed > 99) {
+                fprintf (stderr,"invalid id: %s (must be between 1 and 99)\n", argv[i]);
+                exit(1);
+            }
+            id = (u_char)parsed;
             DPRINT ("ID set to %i\n", id);
         }
         else if (strcmp(argv[i],"-p") == 0 || strcmp(argv[i],"--port") == 0) {
