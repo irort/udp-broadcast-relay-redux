@@ -30,36 +30,55 @@ USAGE
 
 ```
 ./udp-broadcast-relay-redux \
-    -id id \
-    --port <udp-port> \
-    --dev eth0 \
-    [--dev eth1...] \
-    [--multicast 224.0.0.251] \
+    --id <id> \
+    [-p|--port <udp-port>]... \
+    [--ports <list>]... \
+    --dev <dev1> \
+    [--dev <dev2>...] \
+    [--multicast <group>]... \
     [-s <spoof_source_ip>] \
-    [-t [<iface>:]<overridden_target_ip>]
+    [-t [<iface>:]<overridden_target_ip>]... \
+    [-d] \
+    [-f] \
+    [-h|--help]
 ```
+
+At least one of `-p`/`--port` or `--ports` is required, and at least one
+`--dev` is required.
 
 - udp-broadcast-relay-redux must be run as root to be able to create a raw
   socket (necessary) to send packets as though they originated from the
   original sender.
-- `id` must be unique number between instances. This is used to set the TTL of
-  outgoing packets to determine if a packet is an echo and should be discarded.
+- `--id <id>` must be a unique number between 1 and 99. This is used to set the
+  TTL of outgoing packets to determine if a packet is an echo and should be
+  discarded.
+- `-p, --port <udp-port>` listens on and relays a single UDP port. It can be
+  repeated.
+- `--ports <list>` accepts a comma-separated list of UDP ports and inclusive
+  ranges, for example `--ports 6112,16654,16660-16670`. It can be repeated and
+  combined with `-p`/`--port`.
+- `--dev <dev>` specifies an interface to relay broadcasts on. Repeat `--dev`
+  for multiple interfaces.
 - Multicast groups can be joined and relayed with
-  `--multicast <group address>`.
+  `--multicast <group address>`. The option can be repeated.
 - The source address for all packets can be modified with `-s <ip>`. This
   is unusual.
 - A special source ip of `-s 1.1.1.1` can be used to set the source ip
   to the address of the outgoing interface.
+- A special source ip of `-s 1.1.1.2` can be used to set the source ip to the
+  address of the outgoing interface while keeping the original source port.
 - A special destination ip of `-t 255.255.255.255` can be used to set the
-  overriden target ip to the broadcast address of the outgoing interface.
+  overridden target ip to the broadcast address of the outgoing interface.
 - `-t` can be repeated, and each one can optionally be qualified to a single
   outgoing interface with `-t <iface>:<ip>` (`<iface>` matching a name passed
   to `--dev`). Qualified entries for an interface fully replace the plain
   `-t` fallback (and default resolution) for that interface only; giving the
-  same interface with multiple qualified `-t` arguments sends a separate copy 
+  same interface with multiple qualified `-t` arguments sends a separate copy
   to each address. A plain `-t <ip>` with no `iface:` prefix still applies to
   any interface that has no qualified entry of its own, same as before.
+- `-d` enables debugging output.
 - `-f` will fork the application to the background.
+- `-h, --help` prints the help text and exits.
 
 EXAMPLE
 -------
